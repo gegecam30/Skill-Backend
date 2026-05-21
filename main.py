@@ -233,8 +233,7 @@ def register_user(req: RegisterRequest):
 
     # ── NUEVO: Extraemos el código de estudiante del correo ──
     # Ejemplo: "u202517715@upc.edu.pe" -> "u202517715"
-    # Si es un correo normal de Gmail, le asignamos "Externo"
-    uni_code = email.split('@')[0].upper() if is_edu else "EXTERNO"
+    uni_code = email.split('@')[0].upper() if is_edu else None
 
     try:
         # 2. Creación en Supabase Auth
@@ -250,11 +249,14 @@ def register_user(req: RegisterRequest):
         
         # 3. Forzamos el perfil enviando el university_code
         if res.user:
+            # Si es externo, generamos un código único usando parte de su UUID (max 20 chars)
+            final_uni_code = uni_code if is_edu else f"EXT-{res.user.id[:8].upper()}"
+            
             skills_list = [s.strip() for s in req.skills.split(',')]
             supabase.table("profiles").upsert({
                 "id": res.user.id,
                 "display_name": req.name,
-                "university_code": uni_code, # <--- ENVIAMOS EL CÓDIGO AQUÍ
+                "university_code": final_uni_code, # <--- ENVIAMOS EL CÓDIGO ÚNICO AQUÍ
                 "skills": skills_list,
                 "balance": initial_balance,
                 "is_verified_student": is_edu
