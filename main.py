@@ -177,14 +177,18 @@ def create_escrow_transaction(txn: TransactionCreate):
              return {"error": f"Fondos insuficientes. Tienes {current_balance} CH, necesitas {txn.amount} CH."}
 
         # 2. Operación Atómica (Restar saldo y crear transacción)
-        # Nota: En un entorno de producción real, esto se haría con un "Stored Procedure" en SQL 
-        # para evitar condiciones de carrera, pero este enfoque en Python es perfecto para tu prototipo.
-        
-        # Restamos el saldo
         new_balance = current_balance - txn.amount
         supabase.table("profiles").update({"balance": new_balance}).eq("id", txn.sender_id).execute()
         
-        # Creamos la transacción en estado 'escrow'
+        # ── NUEVO: Si el receiver es 'system' (tutorial), no insertamos en transacciones ──
+        if txn.receiver_id == "system":
+            return {
+                "success": True,
+                "message": f"Escrow de tutorial completado: {txn.amount} CH simulados.",
+                "data": [{"id": "escrow_tutorial_123", "status": "escrow"}]
+            }
+
+        # Creamos la transacción en estado 'escrow' para usuarios reales
         response = supabase.table("transactions").insert({
             "sender_id": txn.sender_id,
             "receiver_id": txn.receiver_id,
@@ -200,9 +204,46 @@ def create_escrow_transaction(txn: TransactionCreate):
         }
 
     except Exception as e:
-        # Si algo falla (ej. la base de datos aborta por el CONSTRAINT de saldo negativo),
-        # capturamos el error aquí.
         return {"error": f"Error procesando la transacción: {str(e)}"}
+
+# ---------------------------------------------------------
+# ENDPOINT DE BÚSQUEDA DE EXPERTOS REALES
+# ---------------------------------------------------------
+@app.get("/profiles/category/{category}")
+def get_experts_by_category(category: str):
+    """
+    Busca usuarios en la base de datos que ofrezcan una categoría específica en sus skills.
+    Nota: Supabase Postgres usa el operador 'cs' (contains) para buscar dentro de arrays JSON.
+    """
+    try:
+        # Busca perfiles donde el arreglo 'skills' contenga la categoría (ignorando mayúsculas exactas a nivel UI, pero aquí buscaremos textualmente o traeremos todos para filtrar en caso de diferencias de formato).
+        # Para mayor robustez, traemos todos los perfiles y filtramos en Python para ignorar mayúsculas/minúsculas de manera fácil, ya que es un prototipo.
+        response = supabase.table("profiles").select("*").execute()
+        if not response.data:
+            return {"success": True, "experts": []}
+            
+        real_experts = []
+        search_cat = category.lower().strip()
+        
+        for p in response.data:
+            user_skills = [s.lower().strip() for s in p.get("skills", [])] if p.get("skills") else []
+            # Hacemos match parcial o exacto
+            if any(search_cat in s for s in user_skills):
+                real_experts.append({
+                    "id": p["id"],
+                    "name": p.get("display_name") or p.get("university_code") or "Experto",
+                    "major": "Miembro SkillSwap",
+                    "bg": "#60A5FA",
+                    "icon": "🧑‍🎓",
+                    "portfolio": ["Trabajo 1", "Trabajo 2"],
+                    "rating": 5.0,
+                    "completed": p.get("completedTasks", 0),
+                    "avatar_url": p.get("avatar_url")
+                })
+                
+        return {"success": True, "experts": real_experts}
+    except Exception as e:
+        return {"error": f"Error buscando expertos: {str(e)}"}
     
 
 # ---------------------------------------------------------
