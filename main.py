@@ -234,7 +234,7 @@ def register_user(req: RegisterRequest):
     # ── NUEVO: Extraemos el código de estudiante del correo ──
     # Ejemplo: "u202517715@upc.edu.pe" -> "u202517715"
     # Si es un correo normal de Gmail, le asignamos "Externo"
-    uni_code = email.split('@')[0].upper() if is_edu else 'EXTERNO'
+    uni_code = email.split('@')[0].upper() if is_edu else email.upper()
 
     try:
         # 2. Creación en Supabase Auth
