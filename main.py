@@ -3,17 +3,23 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware # IMPORTANTE: Añade esta importación
 from supabase import create_client, Client
 from dotenv import load_dotenv
+from typing import Optional
 
 # Cargamos las variables de entorno
 load_dotenv()
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY")
 
 if not SUPABASE_URL or not SUPABASE_KEY:
     raise ValueError("🚨 ERROR: No se encontró el archivo .env o faltan las credenciales.")
 
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+# Cliente ANON: Solo para autenticación (login, register)
+supabase_anon: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+# Cliente ADMIN (service_role): Para todas las operaciones de base de datos (ignora RLS)
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY or SUPABASE_KEY)
 
 app = FastAPI(
     title="SkillSwap Campus API",
@@ -278,7 +284,7 @@ def register_user(req: RegisterRequest):
 
     try:
         # 2. Creación en Supabase Auth
-        res = supabase.auth.sign_up({
+        res = supabase_anon.auth.sign_up({
             "email": email,
             "password": req.password,
             "options": {
@@ -316,7 +322,7 @@ def login_user(req: LoginRequest):
     """Inicia sesión usando Email en lugar de código"""
     email = req.email.lower().strip()
     try:
-        res = supabase.auth.sign_in_with_password({
+        res = supabase_anon.auth.sign_in_with_password({
             "email": email,
             "password": req.password
         })
@@ -378,16 +384,21 @@ class PostCreate(BaseModel):
     author_id: str
     content: str
     category: str
+    image_url: Optional[str] = None
 
 @app.post("/posts/")
 def create_post(post: PostCreate):
     """Guarda un nuevo post en la base de datos"""
     try:
-        response = supabase.table("posts").insert({
+        post_data = {
             "author_id": post.author_id,
             "content": post.content,
             "category": post.category
-        }).execute()
+        }
+        if post.image_url:
+            post_data["image_url"] = post.image_url
+        
+        response = supabase.table("posts").insert(post_data).execute()
         return {"success": True, "post": response.data[0]}
     except Exception as e:
         return {"error": f"Error al publicar: {str(e)}"}
@@ -398,7 +409,7 @@ def get_posts():
     try:
         # Hacemos un 'join' con profiles para traer el nombre y código del autor
         response = supabase.table("posts").select(
-            "id, content, category, created_at, profiles(display_name, university_code)"
+            "id, content, category, image_url, created_at, profiles(display_name, university_code, avatar_url)"
         ).order("created_at", desc=True).execute()
         
         return {"success": True, "posts": response.data}
@@ -454,3 +465,35 @@ def update_profile_avatar(req: AvatarUpdateRequest):
         return {"success": True, "avatar_url": req.avatar_url}
     except Exception as e:
         return {"error": f"Error interno en el servidor: {str(e)}"}
+
+# ---------------------------------------------------------
+# ENDPOINTS DE MENSAJERÍA (Chat Simple)
+# ---------------------------------------------------------
+class MessageCreate(BaseModel):
+    sender_id: str
+    receiver_id: str
+    content: str
+
+@app.post("/messages/")
+def send_message(msg: MessageCreate):
+    """Envía un mensaje de un usuario a otro"""
+    try:
+        response = supabase.table("messages").insert({
+            "sender_id": msg.sender_id,
+            "receiver_id": msg.receiver_id,
+            "content": msg.content
+        }).execute()
+        return {"success": True, "message": response.data[0]}
+    except Exception as e:
+        return {"error": f"Error al enviar mensaje: {str(e)}"}
+
+@app.get("/messages/{user1_id}/{user2_id}")
+def get_messages(user1_id: str, user2_id: str):
+    """Obtiene el historial de chat entre dos usuarios"""
+    try:
+        response = supabase.table("messages").select("*").or_(
+            f"and(sender_id.eq.{user1_id},receiver_id.eq.{user2_id}),and(sender_id.eq.{user2_id},receiver_id.eq.{user1_id})"
+        ).order("created_at", desc=False).execute()
+        return {"success": True, "messages": response.data}
+    except Exception as e:
+        return {"error": f"Error al cargar mensajes: {str(e)}"}
