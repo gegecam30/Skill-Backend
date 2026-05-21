@@ -25,13 +25,16 @@ app = FastAPI(
 # ---------------------------------------------------------
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # En producción pondremos el dominio real (ej. vercel.app), por ahora "*" permite todo.
+    allow_origins=[
+        "http://localhost:5500",
+        "http://127.0.0.1:5500",
+        "https://skillswap.gexel.fun"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ... (Aquí debajo dejas tus clases Pydantic y tus endpoints @app.get y @app.post tal como estaban) ...
 
 @app.get("/")
 def read_root():
