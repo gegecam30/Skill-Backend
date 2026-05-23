@@ -447,12 +447,20 @@ def create_post(post: PostCreate):
 def get_posts():
     """Obtiene todos los posts ordenados por fecha y con los datos del autor"""
     try:
-        # Hacemos un 'join' con profiles para traer el nombre y código del autor
-        response = supabase.table("posts").select(
-            "id, content, category, image_url, created_at, profiles(display_name, university_code, avatar_url)"
-        ).order("created_at", desc=True).execute()
+        # Hacemos la consulta separada para evitar fallos de Foreign Key
+        posts_res = supabase.table("posts").select("*").order("created_at", desc=True).execute()
+        if not posts_res.data:
+            return {"success": True, "posts": []}
+            
+        # Obtenemos los perfiles
+        profiles_res = supabase.table("profiles").select("id, display_name, university_code, avatar_url").execute()
+        profiles_map = { p["id"]: p for p in profiles_res.data } if profiles_res.data else {}
         
-        return {"success": True, "posts": response.data}
+        for post in posts_res.data:
+            prof = profiles_map.get(post["author_id"], {})
+            post["profiles"] = prof
+
+        return {"success": True, "posts": posts_res.data}
     except Exception as e:
         return {"error": f"Error al cargar el feed: {str(e)}"}
     
