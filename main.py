@@ -1,5 +1,5 @@
 import os
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware # IMPORTANTE: Añade esta importación
 from supabase import create_client, Client
 from dotenv import load_dotenv
@@ -121,8 +121,8 @@ def get_all_services():
             }
         ]
 
-        # 2. Consultar servicios reales de los usuarios
-        response = supabase.table("services").select("*").execute()
+        # 2. Consultar servicios reales de los usuarios (solo los activos)
+        response = supabase.table("services").select("*").eq("status", "active").execute()
         real_services = response.data if response.data else []
 
         # Formatear los servicios reales para que el frontend los lea igual
@@ -147,6 +147,23 @@ def get_all_services():
 
     except Exception as e:
         return {"error": f"Error al cargar el marketplace: {str(e)}"}
+
+@app.patch("/services/{service_id}/accept")
+def accept_service(service_id: str):
+    """Marca un servicio como aceptado para que no aparezca más en el marketplace"""
+    try:
+        # Verificar que el servicio exista y esté activo
+        res = supabase.table("services").select("status").eq("id", service_id).execute()
+        if not res.data:
+            return {"error": "Servicio no encontrado"}
+        if res.data[0].get("status") == "accepted":
+            return {"error": "Este servicio ya ha sido aceptado por otro usuario"}
+            
+        # Marcarlo como aceptado
+        supabase.table("services").update({"status": "accepted"}).eq("id", service_id).execute()
+        return {"success": True}
+    except Exception as e:
+        return {"error": f"Error al aceptar servicio: {str(e)}"}
 # ---------------------------------------------------------
 # NUEVO MODELO DE DATOS
 # ---------------------------------------------------------
@@ -354,6 +371,29 @@ def get_user_profile(user_id: str):
 # ---------------------------------------------------------
 # ENDPOINT PARA RECOMPENSAS DE MISIONES
 # ---------------------------------------------------------
+class ProfileUpdateRequest(BaseModel):
+    display_name: str
+    skills: list[str]
+
+@app.patch("/profile/{user_id}")
+def update_profile(user_id: str, req: ProfileUpdateRequest):
+    """Actualiza el nombre y habilidades del perfil"""
+    try:
+        response = supabase.table("profiles").update({
+            "display_name": req.display_name,
+            "skills": req.skills
+        }).eq("id", user_id).execute()
+        
+        if not response.data:
+            return {"error": "No se pudo actualizar el perfil."}
+            
+        return {"success": True, "profile": response.data[0]}
+    except Exception as e:
+        return {"error": f"Error interno: {str(e)}"}
+
+# ---------------------------------------------------------
+# ENDPOINT PARA RECOMPENSAS DE MISIONES
+# ---------------------------------------------------------
 class RewardRequest(BaseModel):
     user_id: str
     amount: int
@@ -497,3 +537,41 @@ def get_messages(user1_id: str, user2_id: str):
         return {"success": True, "messages": response.data}
     except Exception as e:
         return {"error": f"Error al cargar mensajes: {str(e)}"}
+
+# ---------------------------------------------------------
+# ENDPOINTS DE ADMINISTRADOR / MODERACIÓN
+# ---------------------------------------------------------
+def check_admin(admin_id: str):
+    res = supabase.table("profiles").select("role").eq("id", admin_id).execute()
+    if not res.data or res.data[0].get("role") != "admin":
+        raise HTTPException(status_code=403, detail="Acceso denegado: Se requieren permisos de administrador.")
+
+@app.delete("/admin/posts/{post_id}")
+def admin_delete_post(post_id: str, admin_id: str):
+    try:
+        check_admin(admin_id)
+        supabase.table("posts").delete().eq("id", post_id).execute()
+        return {"success": True}
+    except Exception as e:
+        if isinstance(e, HTTPException): raise e
+        return {"error": str(e)}
+
+@app.delete("/admin/services/{service_id}")
+def admin_delete_service(service_id: str, admin_id: str):
+    try:
+        check_admin(admin_id)
+        supabase.table("services").delete().eq("id", service_id).execute()
+        return {"success": True}
+    except Exception as e:
+        if isinstance(e, HTTPException): raise e
+        return {"error": str(e)}
+
+@app.post("/admin/ban/{user_id}")
+def admin_ban_user(user_id: str, admin_id: str, ban: bool = True):
+    try:
+        check_admin(admin_id)
+        supabase.table("profiles").update({"is_banned": ban}).eq("id", user_id).execute()
+        return {"success": True, "message": "Usuario baneado" if ban else "Usuario desbaneado"}
+    except Exception as e:
+        if isinstance(e, HTTPException): raise e
+        return {"error": str(e)}
